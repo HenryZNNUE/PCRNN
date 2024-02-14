@@ -248,12 +248,12 @@ namespace HZAVNN
 					{
 						for (int p = 0; p < FeatureTransformer * pc_ratio; p++)
 						{
-							const auto valp = reinterpret_cast<const vec_t*>(&feature[reflection_neurons[p]].value);
-							const auto wp = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[k]].weight[reflection_neurons[p]]);
-							const auto bp = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[k]].bias[reflection_neurons[p]]);
+							const auto valp = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[p]].value);
+							const auto wp = reinterpret_cast<const vec_t*>(&feature[reflection_neurons[k]].weight[reflection_neurons[p]]);
+							const auto bp = reinterpret_cast<const vec_t*>(&feature[reflection_neurons[k]].bias[reflection_neurons[p]]);
 							double resultp;
 							vec_store(reinterpret_cast<vec_t*>(&resultp), vec_add_16(vec_mul_16(*valp, *wp), *bp));
-							layer1[reflection_neurons[k]].value[reflection_neurons[p]] = ReLU(resultp);
+							feature[reflection_neurons[k]].value[reflection_neurons[p]] = ReLU(resultp);
 
 							for (int n = (FeatureTransformer + L1) * pc_ratio ; n < (FeatureTransformer + L1 + L2) * pc_ratio; n++)
 							{
@@ -289,12 +289,12 @@ namespace HZAVNN
 					{
 						for (int p = FeatureTransformer * pc_ratio; p < (FeatureTransformer + L1) * pc_ratio; p++)
 						{
-							const auto valp = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[p]].value);
-							const auto wp = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[k]].weight[reflection_neurons[p]]);
-							const auto bp = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[k]].bias[reflection_neurons[p]]);
+							const auto valp = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[p]].value);
+							const auto wp = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[k]].weight[reflection_neurons[p]]);
+							const auto bp = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[k]].bias[reflection_neurons[p]]);
 							double resultp;
 							vec_store(reinterpret_cast<vec_t*>(&resultp), vec_add_16(vec_mul_16(*valp, *wp), *bp));
-							layer2[reflection_neurons[k]].value[reflection_neurons[p]] = ReLU(resultp);
+							layer1[reflection_neurons[k]].value[reflection_neurons[p]] = ReLU(resultp);
 
 							for (int n = (FeatureTransformer + L1 + L2) * pc_ratio; n < (FeatureTransformer + L1 + L2 + L3) * pc_ratio; n++)
 							{
@@ -330,12 +330,12 @@ namespace HZAVNN
 					{
 						for (int p = (FeatureTransformer + L1) * pc_ratio; p < (FeatureTransformer + L1 + L2) * pc_ratio; p++)
 						{
-							const auto valp = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[p]].value);
-							const auto wp = reinterpret_cast<const vec_t*>(&layer3[reflection_neurons[k]].weight[reflection_neurons[p]]);
-							const auto bp = reinterpret_cast<const vec_t*>(&layer3[reflection_neurons[k]].bias[reflection_neurons[p]]);
+							const auto valp = reinterpret_cast<const vec_t*>(&layer3[reflection_neurons[p]].value);
+							const auto wp = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[k]].weight[reflection_neurons[p]]);
+							const auto bp = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[k]].bias[reflection_neurons[p]]);
 							double resultp;
 							vec_store(reinterpret_cast<vec_t*>(&resultp), vec_add_16(vec_mul_16(*valp, *wp), *bp));
-							layer3[reflection_neurons[k]].value[reflection_neurons[p]] = ReLU(resultp);
+							layer2[reflection_neurons[k]].value[reflection_neurons[p]] = ReLU(resultp);
 
 							for (int n = (FeatureTransformer + L1 + L2 + L3) * pc_ratio; n < (FeatureTransformer + L1 + L2 + L3 + L4) * pc_ratio; n++)
 							{
