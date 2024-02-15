@@ -445,7 +445,7 @@ namespace PCRNN
 
 	}
 
-	void backward(const int& flag)
+	void backward(const int& score)
 	{
 		for (int i = 0; i < L4; i++)
 		{
@@ -456,7 +456,7 @@ namespace PCRNN
 				const auto b = reinterpret_cast<const vec_t*>(&layer4[i].bias[j]);
 				double result;
 				vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
-				delta4[i] += result;
+				delta4[i] += -(score - result) * result * (1.0 - result);
 			}
 		}
 
@@ -469,7 +469,7 @@ namespace PCRNN
 				const auto b = reinterpret_cast<const vec_t*>(&layer3[i].bias[j]);
 				double result;
 				vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
-				delta3[i] += result;
+				delta3[i] += -(score - result) * result * (1.0 - result);
 			}
 		}
 
@@ -482,7 +482,7 @@ namespace PCRNN
 				const auto b = reinterpret_cast<const vec_t*>(&layer2[i].bias[j]);
 				double result;
 				vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
-				delta2[i] += result;
+				delta2[i] += -(score - result) * result * (1.0 - result);
 			}
 		}
 
@@ -495,7 +495,7 @@ namespace PCRNN
 				const auto b = reinterpret_cast<const vec_t*>(&layer1[i].bias[j]);
 				double result;
 				vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
-				delta1[i] += result;
+				delta1[i] += -(score - result) * result * (1.0 - result);
 			}
 		}
 
