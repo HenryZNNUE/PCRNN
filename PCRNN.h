@@ -72,25 +72,26 @@ using vec_t = __m256i;
 #define vec_min_16(a, b) _mm256_min_epi16(a, b)
 #endif
 
-int lr = 4.375e-4;
-double loss = 0;
-int thres = 1e-3;
-int losscounter = 0;
-int batch = 0;
-int batchsize = 1e7;
-double gamma = 0.995;
-
-double pc_ratio = 1 / 8;
-// Vector that stores neuron index for reflection
-// Size = (FeatureTransformer + L1 + L2 + L3) * pc_ratio
-// Stucture = 8 + 32 + 16 + 8 = 64
-std::vector<int> reflection_neurons;
-
-std::vector<double> loss_his;
-
-
-namespace HZAVNN
+namespace PCRNN
 {
+	int lr = 4.375e-4;
+	double loss = 0;
+	int thres = 1e-3;
+	int losscounter = 0;
+	int batch = 0;
+	int batchsize = 1e7;
+	double gamma = 0.995;
+
+	int reflection_counter = 0;
+
+	double pc_ratio = 1 / 8;
+	// Vector that stores neuron index for reflection
+	// Size = (FeatureTransformer + L1 + L2 + L3) * pc_ratio
+	// Stucture = 8 + 32 + 16 + 8 = 64
+	std::vector<int> reflection_neurons;
+
+	std::vector<double> loss_his;
+
 	struct Neuron
 	{
 		std::vector<double> value, weight, bias;
@@ -132,9 +133,10 @@ namespace HZAVNN
 	std::uniform_int_distribution<> re_dis1(0, L1 - 1);
 	std::uniform_int_distribution<> re_dis2(0, L2 - 1);
 	std::uniform_int_distribution<> re_dis3(0, L3 - 1);
-	std::uniform_int_distribution<> re_dis4(0, L4 - 1);
 
-	std::uniform_int_distribution<> re_offset(0, L1);
+	int f_rand_offset = 0;
+	int l1_rand_offset = 0;
+	int l2_rand_offset = 0;
 
 	// Values are set to zero
 	// Weights and Biases are initialized randomly from 0 to 1
@@ -147,11 +149,6 @@ namespace HZAVNN
 			feature[i].bias.emplace_back(dis(gen));
 		}
 
-		for (int k = 0; k < FeatureTransformer * pc_ratio; k++)
-		{
-			reflection_neurons.emplace_back(re_disf(gen));
-		}
-
 		for (int i = 0; i < L1; i++)
 		{
 			for (int j = 0; j < FeatureTransformer; j++)
@@ -160,11 +157,6 @@ namespace HZAVNN
 				layer1[i].weight.emplace_back(dis(gen));
 				layer1[i].bias.emplace_back(dis(gen));
 			}
-		}
-
-		for (int k = 0; k < L1 * pc_ratio; k++)
-		{
-			reflection_neurons.emplace_back(re_dis1(gen));
 		}
 
 		for (int i = 0; i < L2; i++)
@@ -177,11 +169,6 @@ namespace HZAVNN
 			}
 		}
 
-		for (int k = 0; k < L2 * pc_ratio; k++)
-		{
-			reflection_neurons.emplace_back(re_dis2(gen));
-		}
-
 		for (int i = 0; i < L3; i++)
 		{
 			for (int j = 0; j < L2; j++)
@@ -192,11 +179,6 @@ namespace HZAVNN
 			}
 		}
 
-		for (int k = 0; k < L3 * pc_ratio; k++)
-		{
-			reflection_neurons.emplace_back(re_dis3(gen));
-		}
-
 		for (int i = 0; i < L4; i++)
 		{
 			for (int j = 0; j < L3; j++)
@@ -204,6 +186,38 @@ namespace HZAVNN
 				layer4[i].value.emplace_back(0);
 				layer4[i].weight.emplace_back(dis(gen));
 				layer4[i].bias.emplace_back(dis(gen));
+			}
+		}
+
+		for (int i = 0; i < FeatureTransformer; i++)
+		{
+			if ((i + 1) * pc_ratio == 0)
+			{
+				reflection_neurons.emplace_back(i);
+			}
+		}
+
+		for (int i = 0; i < L1; i++)
+		{
+			if ((i + 1) * pc_ratio == 0)
+			{
+				reflection_neurons.emplace_back(i);
+			}
+		}
+
+		for (int i = 0; i < L2; i++)
+		{
+			if ((i + 1) * pc_ratio == 0)
+			{
+				reflection_neurons.emplace_back(i);
+			}
+		}
+
+		for (int i = 0; i < L3; i++)
+		{
+			if ((i + 1) * pc_ratio == 0)
+			{
+				reflection_neurons.emplace_back(i);
 			}
 		}
 	}
@@ -216,7 +230,7 @@ namespace HZAVNN
 			{
 				for (int k = 0; k < FeatureTransformer * pc_ratio; k++)
 				{
-					if (j != reflection_neurons[k])
+					if (i != reflection_neurons[k] && j != reflection_neurons[k])
 					{
 						const auto val = reinterpret_cast<const vec_t*>(&feature[j].value);
 						const auto w = reinterpret_cast<const vec_t*>(&layer1[i].weight[j]);
@@ -224,10 +238,47 @@ namespace HZAVNN
 						double result;
 						vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
 						layer1[i].value[j] = ReLU(result);
+
+						for (int r = f_rand_offset; r < f_rand_offset + 4; r++)
+						{
+							if (r != reflection_neurons[k])
+							{
+								const auto valr = reinterpret_cast<const vec_t*>(&feature[r].value);
+								const auto wr = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[k]].weight[r]);
+								const auto br = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[k]].bias[r]);
+								double resultr;
+								vec_store(reinterpret_cast<vec_t*>(&resultr), vec_add_16(vec_mul_16(*valr, *wr), *br));
+								layer1[reflection_neurons[k]].value[r] = ReLU(resultr);
+							}
+							else
+							{
+								while (r == reflection_neurons[k])
+								{
+									reflection_counter++;
+
+									for (int offset = 3 - r; offset < 4 + reflection_counter; offset++)
+									{
+										if (offset == reflection_neurons[k])
+										{
+											continue;
+										}
+
+										const auto valr = reinterpret_cast<const vec_t*>(&feature[offset].value);
+										const auto wr = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[k]].weight[offset]);
+										const auto br = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[k]].bias[offset]);
+										double resultr;
+										vec_store(reinterpret_cast<vec_t*>(&resultr), vec_add_16(vec_mul_16(*valr, *wr), *br));
+										layer1[reflection_neurons[k]].value[offset] = ReLU(resultr);
+									}
+								}
+							}
+						}
 					}
 				}
 			}
 		}
+
+		reflection_counter = 0;
 
 		for (int i = 0; i < L2; i++)
 		{
@@ -235,7 +286,7 @@ namespace HZAVNN
 			{
 				for (int k = FeatureTransformer * pc_ratio; k < (FeatureTransformer + L1) * pc_ratio; k++)
 				{
-					if (j != reflection_neurons[k])
+					if (i != reflection_neurons[k] && j != reflection_neurons[k])
 					{
 						const auto val = reinterpret_cast<const vec_t*>(&layer1[j].value);
 						const auto w = reinterpret_cast<const vec_t*>(&layer2[i].weight[j]);
@@ -243,6 +294,23 @@ namespace HZAVNN
 						double result;
 						vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
 						layer2[i].value[j] = ReLU(result);
+
+						if (j + l1_rand_offset % 2 == 0)
+						{
+							const auto val1 = reinterpret_cast<const vec_t*>(&layer1[j - 1].value);
+							const auto w1 = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[k]].weight[j - 1]);
+							const auto b1 = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[k]].bias[j - 1]);
+							double result1;
+							vec_store(reinterpret_cast<vec_t*>(&result1), vec_add_16(vec_mul_16(*val1, *w1), *b1));
+							layer2[reflection_neurons[k]].value[j - 1] = ReLU(result1);
+
+							const auto val2 = reinterpret_cast<const vec_t*>(&layer1[j].value);
+							const auto w2 = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[k]].weight[j]);
+							const auto b2 = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[k]].bias[j]);
+							double result2;
+							vec_store(reinterpret_cast<vec_t*>(&result2), vec_add_16(vec_mul_16(*val2, *w2), *b2));
+							layer2[reflection_neurons[k]].value[j] = ReLU(result2);
+						}
 					}
 					else
 					{
@@ -270,13 +338,15 @@ namespace HZAVNN
 			}
 		}
 
+		reflection_counter = 0;
+
 		for (int i = 0; i < L3; i++)
 		{
 			for (int j = 0; j < L2; j++)
 			{
 				for (int k = (FeatureTransformer + L1) * pc_ratio; k < (FeatureTransformer + L1 + L2) * pc_ratio; k++)
 				{
-					if (j != reflection_neurons[k])
+					if (i != reflection_neurons[k] && j != reflection_neurons[k])
 					{
 						const auto val = reinterpret_cast<const vec_t*>(&layer2[j].value);
 						const auto w = reinterpret_cast<const vec_t*>(&layer3[i].weight[j]);
@@ -284,6 +354,23 @@ namespace HZAVNN
 						double result;
 						vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
 						layer3[i].value[j] = ReLU(result);
+
+						if (j + l2_rand_offset % 2 == 0)
+						{
+							const auto val1 = reinterpret_cast<const vec_t*>(&layer2[j - 1].value);
+							const auto w1 = reinterpret_cast<const vec_t*>(&layer3[reflection_neurons[k]].weight[j - 1]);
+							const auto b1 = reinterpret_cast<const vec_t*>(&layer3[reflection_neurons[k]].bias[j - 1]);
+							double result1;
+							vec_store(reinterpret_cast<vec_t*>(&result1), vec_add_16(vec_mul_16(*val1, *w1), *b1));
+							layer3[reflection_neurons[k]].value[j - 1] = ReLU(result1);
+
+							const auto val2 = reinterpret_cast<const vec_t*>(&layer2[j].value);
+							const auto w2 = reinterpret_cast<const vec_t*>(&layer3[reflection_neurons[k]].weight[j]);
+							const auto b2 = reinterpret_cast<const vec_t*>(&layer3[reflection_neurons[k]].bias[j]);
+							double result2;
+							vec_store(reinterpret_cast<vec_t*>(&result2), vec_add_16(vec_mul_16(*val2, *w2), *b2));
+							layer3[reflection_neurons[k]].value[j] = ReLU(result2);
+						}
 					}
 					else
 					{
@@ -311,13 +398,15 @@ namespace HZAVNN
 			}
 		}
 
+		reflection_counter = 0;
+
 		for (int i = 0; i < L4; i++)
 		{
 			for (int j = 0; j < L3; j++)
 			{
 				for (int k = (FeatureTransformer + L1 + L2) * pc_ratio; k < (FeatureTransformer + L1 + L2 + L3) * pc_ratio; k++)
 				{
-					if (j != reflection_neurons[k])
+					if (i != reflection_neurons[k] && j != reflection_neurons[k])
 					{
 						const auto val = reinterpret_cast<const vec_t*>(&layer3[j].value);
 						const auto w = reinterpret_cast<const vec_t*>(&layer4[i].weight[j]);
@@ -351,6 +440,9 @@ namespace HZAVNN
 				}
 			}
 		}
+
+		reflection_counter = 0;
+
 	}
 
 	void backward(const int& flag)
@@ -486,6 +578,8 @@ namespace HZAVNN
 	{
 		std::ofstream nnfile(filepath.c_str());
 
+		nnfile << FeatureTransformer << " " << L1 << " " << L2 << " " << L3 << " " << L4 << std::endl;
+
 		for (int i = 0; i < FeatureTransformer; i++)
 		{
 			nnfile << feature[i].weight[0] << " " << feature[i].bias[0] << std::endl;
@@ -522,6 +616,11 @@ namespace HZAVNN
 				nnfile << layer4[i].weight[j] << " " << layer4[i].bias[j] << std::endl;
 			}
 		}
+
+		nnfile << "pcr" << " " << pc_ratio << std::endl;
+		nnfile << "fro" << " " << f_rand_offset << std::endl;
+		nnfile << "l1ro" << " " << l1_rand_offset << std::endl;
+		nnfile << "l2ro" << " " << l2_rand_offset << std::endl;
 
 		nnfile.close();
 	}
@@ -564,39 +663,47 @@ namespace HZAVNN
 
 	void tune_reflection()
 	{
-		reflection_neurons.clear();
+		f_rand_offset = re_disf(gen);
+		l1_rand_offset = re_dis1(gen);
+		l2_rand_offset = re_dis2(gen);
 
-		int offset = re_offset(gen);
-
-		for (int k = 0; k < FeatureTransformer * pc_ratio + offset; k++)
+		for (int i = 0; i < FeatureTransformer * pc_ratio; i++)
 		{
-			if (k >= offset)
+			reflection_neurons[i] = re_disf(gen);
+			
+			if (reflection_neurons[i] != i)
 			{
-				reflection_neurons.emplace_back(re_disf(gen));
+				std::swap(feature[re_disf(gen)], feature[reflection_neurons[i]]);
 			}
 		}
 
-		for (int k = 0; k < L1 * pc_ratio + offset; k++)
+		for (int i = 0; i < L1 * pc_ratio; i++)
 		{
-			if (k >= offset)
+			reflection_neurons[i] = re_dis1(gen);
+
+			if (reflection_neurons[i] != i)
 			{
-				reflection_neurons.emplace_back(re_disf(gen));
+				std::swap(layer1[re_dis1(gen)], layer1[reflection_neurons[i]]);
 			}
 		}
 
-		for (int k = 0; k < L2 * pc_ratio + offset; k++)
+		for (int i = 0; i < L2 * pc_ratio; i++)
 		{
-			if (k >= offset)
+			reflection_neurons[i] = re_dis2(gen);
+
+			if (reflection_neurons[i] != i)
 			{
-				reflection_neurons.emplace_back(re_disf(gen));
+				std::swap(layer2[re_dis2(gen)], layer2[reflection_neurons[i]]);
 			}
 		}
 
-		for (int k = 0; k < L3 * pc_ratio + offset; k++)
+		for (int i = 0; i < L3 * pc_ratio; i++)
 		{
-			if (k >= offset)
+			reflection_neurons[i] = re_dis3(gen);
+
+			if (reflection_neurons[i] != i)
 			{
-				reflection_neurons.emplace_back(re_disf(gen));
+				std::swap(layer3[re_dis3(gen)], layer3[reflection_neurons[i]]);
 			}
 		}
 	}
@@ -636,6 +743,8 @@ namespace HZAVNN
 			{
 				tune_reflection();
 			}
+
+			loss_his.clear();
 		}
 		else
 		{
