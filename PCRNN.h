@@ -409,9 +409,9 @@ namespace PCRNN
 
 	void train(std::vector<double> element, const double& score)
 	{
-		for (int i = 0; i < FeatureTransformer; i++)
+		for (int i = 0; i < layer_structure[0]; i++)
 		{
-			feature[i].value.emplace_back(element[i]);
+			layer[i].value.emplace_back(element[i]);
 		}
 
 		forward();
