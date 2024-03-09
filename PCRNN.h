@@ -142,7 +142,7 @@ namespace PCRNN
 							vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
 							layer[j].value[k] = ReLU(result);
 
-							if (k + rand_offset % 2 == 0)
+							if ((k + rand_offset) % 2 == 0)
 							{
 								const auto val1 = reinterpret_cast<const vec_t*>(&layer[(((k - 1) < 0) ? 0 : (k - 1))].value);
 								const auto w1 = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[l]].weight[(((k - 1) < 0) ? 0 : (k - 1))]);
@@ -380,6 +380,9 @@ namespace PCRNN
 
 	void tune_reflection()
 	{
+		std::uniform_int_distribution<>re_dis_offset(2, 10);
+		rand_offset = re_dis_offset(gen);
+
 		for (int i = 0; i < layer_structure.size(); i++)
 		{
 			for (int j = layer_structure[i]; j < layer_structure[(((i + 1) == layer_structure.size()) ? (layer_structure.size() - 1) : (i + 1))] * pc_ratio; j++)
