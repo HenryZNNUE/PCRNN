@@ -16,34 +16,6 @@
 #include <sstream>
 #include <immintrin.h>
 
-#define FeatureTransformer 64
-
-// 2 = WHITE and BLACK
-// 16 = 10 numbers + 6 characters
-// 64 = SHA256 Value
-// #define L1 (2 * 16 * 64)
-
-// Newly Modified L1 = (WHITE and BLACK) * (1e-1 digit + 1e-2 digit) * FeatureTransformer
-// Smaller L1 can improve ram usage and training & running speed
-// Comparing with previous L1, there are a deficiency of features for that big L1 to extract
-#define L1 (2 * 2 * FeatureTransformer)
-
-// 2 * FeatureTransformer Size
-#define L2 (2 * FeatureTransformer)
-
-// FeatureTransformer Size
-// Delicately designed for better output
-#define L3 FeatureTransformer
-
-/*
-* // Two Outputs: W, B Evaluation
-* // Ratio = B / W * 100%
-* #define L4 2
-*/
-
-// Comparing with previous L4, this one can better fit the score offered in training dataset
-#define L4 1
-
 // Here comes some SIMD functions replaced by some easy - to - use names
 // In most cases, as cpus for home are fully advanced
 // therefore, in most cases, only avx512 and avx2 (a bit slower than avx512) are recommended
@@ -114,161 +86,100 @@ namespace PCRNN
 		return 1 / (1 + exp(-input));
 	}
 
-	std::vector<Neuron> feature(FeatureTransformer);
-	std::vector<Neuron> layer1(L1);
-	std::vector<Neuron> layer2(L2);
-	std::vector<Neuron> layer3(L3);
-	std::vector<Neuron> layer4(L4);
-
-	std::vector<double> deltaf(FeatureTransformer);
-	std::vector<double> delta1(L1);
-	std::vector<double> delta2(L2);
-	std::vector<double> delta3(L3);
-	std::vector<double> delta4(L4);
+	std::vector<int> layer_structure;
+	std::vector<Neuron> layer;
+	std::vector<double> delta;
 
 	std::random_device rd;
 	std::mt19937 gen(rd());
-	std::uniform_real_distribution<> dis(0, 1);
-	std::uniform_int_distribution<> re_disf(0, FeatureTransformer - 1);
-	std::uniform_int_distribution<> re_dis1(0, L1 - 1);
-	std::uniform_int_distribution<> re_dis2(0, L2 - 1);
-	std::uniform_int_distribution<> re_dis3(0, L3 - 1);
 
-	int f_rand_offset = 0;
-	int l1_rand_offset = 0;
-	int l2_rand_offset = 0;
+	int rand_offset = 0;
+
+	void set_PCRNN_structure(std::vector<int> structure)
+	{
+		for (int i = 0; i < structure.size(); i++)
+		{
+			layer_structure.emplace_back(structure[i]);
+		}
+	}
 
 	// Values are set to zero
 	// Weights and Biases are initialized randomly from 0 to 1
 	void init()
 	{
-		for (int i = 0; i < FeatureTransformer; i++)
+		for (int i = 0; i < layer_structure.size(); i++)
 		{
-			feature[i].value.emplace_back(0);
-			feature[i].weight.emplace_back(dis(gen));
-			feature[i].bias.emplace_back(dis(gen));
-		}
-
-		for (int i = 0; i < L1; i++)
-		{
-			for (int j = 0; j < FeatureTransformer; j++)
+			for (int i = 0; i < layer_structure[i]; i++)
 			{
-				layer1[i].value.emplace_back(0);
-				layer1[i].weight.emplace_back(dis(gen));
-				layer1[i].bias.emplace_back(dis(gen));
-			}
-		}
+				layer[i].value.emplace_back(0);
+				layer[i].weight.emplace_back(dis(gen));
+				layer[i].bias.emplace_back(dis(gen));
 
-		for (int i = 0; i < L2; i++)
-		{
-			for (int j = 0; j < L1; j++)
-			{
-				layer2[i].value.emplace_back(0);
-				layer2[i].weight.emplace_back(dis(gen));
-				layer2[i].bias.emplace_back(dis(gen));
-			}
-		}
-
-		for (int i = 0; i < L3; i++)
-		{
-			for (int j = 0; j < L2; j++)
-			{
-				layer3[i].value.emplace_back(0);
-				layer3[i].weight.emplace_back(dis(gen));
-				layer3[i].bias.emplace_back(dis(gen));
-			}
-		}
-
-		for (int i = 0; i < L4; i++)
-		{
-			for (int j = 0; j < L3; j++)
-			{
-				layer4[i].value.emplace_back(0);
-				layer4[i].weight.emplace_back(dis(gen));
-				layer4[i].bias.emplace_back(dis(gen));
-			}
-		}
-
-		for (int i = 0; i < FeatureTransformer; i++)
-		{
-			if ((i + 1) * pc_ratio == 0)
-			{
-				reflection_neurons.emplace_back(i);
-			}
-		}
-
-		for (int i = 0; i < L1; i++)
-		{
-			if ((i + 1) * pc_ratio == 0)
-			{
-				reflection_neurons.emplace_back(i);
-			}
-		}
-
-		for (int i = 0; i < L2; i++)
-		{
-			if ((i + 1) * pc_ratio == 0)
-			{
-				reflection_neurons.emplace_back(i);
-			}
-		}
-
-		for (int i = 0; i < L3; i++)
-		{
-			if ((i + 1) * pc_ratio == 0)
-			{
-				reflection_neurons.emplace_back(i);
+				if ((i + 1) * pc_ratio == 0)
+				{
+					reflection_neurons.emplace_back(i);
+				}
 			}
 		}
 	}
 
 	void forward()
 	{
-		for (int i = 0; i < L1; i++)
+		for (int i = 0; i < layer_structure.size(); i++)
 		{
-			for (int j = 0; j < FeatureTransformer; j++)
+			for (int j = layer_structure[i]; j < layer_structure[(((i + 1) == layer_structure.size()) ? (layer_structure.size() - 1) : (i + 1))]; j++)
 			{
-				for (int k = 0; k < FeatureTransformer * pc_ratio; k++)
+				for (int k = ((i == 0) ? 0 : layer_structure[i - 1]); k < layer_structure[i]; k++)
 				{
-					if (i != reflection_neurons[k] && j != reflection_neurons[k])
+					for (int l = ((i == 0) ? 0 : layer_structure[i - 1] * pc_ratio); l < layer_structure[i] * pc_ratio; l++)
 					{
-						const auto val = reinterpret_cast<const vec_t*>(&feature[j].value);
-						const auto w = reinterpret_cast<const vec_t*>(&layer1[i].weight[j]);
-						const auto b = reinterpret_cast<const vec_t*>(&layer1[i].bias[j]);
-						double result;
-						vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
-						layer1[i].value[j] = ReLU(result);
-
-						for (int r = f_rand_offset; r < f_rand_offset + 4; r++)
+						if (j != reflection_neurons[l] && k != reflection_neurons[l])
 						{
-							if (r != reflection_neurons[k])
+							const auto val = reinterpret_cast<const vec_t*>(&layer[k].value);
+							const auto w = reinterpret_cast<const vec_t*>(&layer[j].weight[k]);
+							const auto b = reinterpret_cast<const vec_t*>(&layer[j].bias[k]);
+							double result;
+							vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
+							layer[j].value[k] = ReLU(result);
+
+							if (k + rand_offset % 2 == 0)
 							{
-								const auto valr = reinterpret_cast<const vec_t*>(&feature[r].value);
-								const auto wr = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[k]].weight[r]);
-								const auto br = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[k]].bias[r]);
-								double resultr;
-								vec_store(reinterpret_cast<vec_t*>(&resultr), vec_add_16(vec_mul_16(*valr, *wr), *br));
-								layer1[reflection_neurons[k]].value[r] = ReLU(resultr);
+								const auto val1 = reinterpret_cast<const vec_t*>(&layer[(((k - 1) < 0) ? 0 : (k - 1))].value);
+								const auto w1 = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[l]].weight[(((k - 1) < 0) ? 0 : (k - 1))]);
+								const auto b1 = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[l]].bias[(((k - 1) < 0) ? 0 : (k - 1))]);
+								double result1;
+								vec_store(reinterpret_cast<vec_t*>(&result1), vec_add_16(vec_mul_16(*val1, *w1), *b1));
+								layer[reflection_neurons[l]].value[(((k - 1) < 0) ? 0 : (k - 1))] = ReLU(result1);
+
+								const auto val2 = reinterpret_cast<const vec_t*>(&layer[j].value);
+								const auto w2 = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[l]].weight[j]);
+								const auto b2 = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[l]].bias[j]);
+								double result2;
+								vec_store(reinterpret_cast<vec_t*>(&result2), vec_add_16(vec_mul_16(*val2, *w2), *b2));
+								layer[reflection_neurons[l]].value[k] = ReLU(result2);
 							}
-							else
+						}
+						else
+						{
+							if (i > 0)
 							{
-								while (r == reflection_neurons[k])
+								for (int p = ((i == 1) ? 0 : layer_structure[i - 2] * pc_ratio); p < layer_structure[i - 1] * pc_ratio; p++)
 								{
-									reflection_counter++;
+									const auto valp = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[p]].value);
+									const auto wp = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[l]].weight[reflection_neurons[p]]);
+									const auto bp = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[l]].bias[reflection_neurons[p]]);
+									double resultp;
+									vec_store(reinterpret_cast<vec_t*>(&resultp), vec_add_16(vec_mul_16(*valp, *wp), *bp));
+									layer[reflection_neurons[l]].value[reflection_neurons[p]] = ReLU(resultp);
 
-									for (int offset = 3 - r; offset < 4 + reflection_counter; offset++)
+									for (int n = layer_structure[i] * pc_ratio; n < layer_structure[i + 1] * pc_ratio; n++)
 									{
-										if (offset == reflection_neurons[k])
-										{
-											continue;
-										}
-
-										const auto valr = reinterpret_cast<const vec_t*>(&feature[offset].value);
-										const auto wr = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[k]].weight[offset]);
-										const auto br = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[k]].bias[offset]);
-										double resultr;
-										vec_store(reinterpret_cast<vec_t*>(&resultr), vec_add_16(vec_mul_16(*valr, *wr), *br));
-										layer1[reflection_neurons[k]].value[offset] = ReLU(resultr);
+										const auto valn = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[p]].value);
+										const auto wn = reinterpret_cast<const vec_t*>(&layer[k].weight[reflection_neurons[p]]);
+										const auto bn = reinterpret_cast<const vec_t*>(&layer[k].bias[reflection_neurons[p]]);
+										double resultn;
+										vec_store(reinterpret_cast<vec_t*>(&resultn), vec_add_16(vec_mul_16(*valn, *wn), *bn));
+										layer[j].value[reflection_neurons[p]] = ReLU(resultn);
 									}
 								}
 							}
@@ -277,298 +188,127 @@ namespace PCRNN
 				}
 			}
 		}
-
-		reflection_counter = 0;
-
-		for (int i = 0; i < L2; i++)
-		{
-			for (int j = 0; j < L1; j++)
-			{
-				for (int k = FeatureTransformer * pc_ratio; k < (FeatureTransformer + L1) * pc_ratio; k++)
-				{
-					if (i != reflection_neurons[k] && j != reflection_neurons[k])
-					{
-						const auto val = reinterpret_cast<const vec_t*>(&layer1[j].value);
-						const auto w = reinterpret_cast<const vec_t*>(&layer2[i].weight[j]);
-						const auto b = reinterpret_cast<const vec_t*>(&layer2[i].bias[j]);
-						double result;
-						vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
-						layer2[i].value[j] = ReLU(result);
-
-						if (j + l1_rand_offset % 2 == 0)
-						{
-							const auto val1 = reinterpret_cast<const vec_t*>(&layer1[j - 1].value);
-							const auto w1 = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[k]].weight[j - 1]);
-							const auto b1 = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[k]].bias[j - 1]);
-							double result1;
-							vec_store(reinterpret_cast<vec_t*>(&result1), vec_add_16(vec_mul_16(*val1, *w1), *b1));
-							layer2[reflection_neurons[k]].value[j - 1] = ReLU(result1);
-
-							const auto val2 = reinterpret_cast<const vec_t*>(&layer1[j].value);
-							const auto w2 = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[k]].weight[j]);
-							const auto b2 = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[k]].bias[j]);
-							double result2;
-							vec_store(reinterpret_cast<vec_t*>(&result2), vec_add_16(vec_mul_16(*val2, *w2), *b2));
-							layer2[reflection_neurons[k]].value[j] = ReLU(result2);
-						}
-					}
-					else
-					{
-						for (int p = 0; p < FeatureTransformer * pc_ratio; p++)
-						{
-							const auto valp = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[p]].value);
-							const auto wp = reinterpret_cast<const vec_t*>(&feature[reflection_neurons[k]].weight[reflection_neurons[p]]);
-							const auto bp = reinterpret_cast<const vec_t*>(&feature[reflection_neurons[k]].bias[reflection_neurons[p]]);
-							double resultp;
-							vec_store(reinterpret_cast<vec_t*>(&resultp), vec_add_16(vec_mul_16(*valp, *wp), *bp));
-							feature[reflection_neurons[k]].value[reflection_neurons[p]] = ReLU(resultp);
-
-							for (int n = (FeatureTransformer + L1) * pc_ratio ; n < (FeatureTransformer + L1 + L2) * pc_ratio; n++)
-							{
-								const auto valn = reinterpret_cast<const vec_t*>(&feature[reflection_neurons[p]].value);
-								const auto wn = reinterpret_cast<const vec_t*>(&layer2[i].weight[reflection_neurons[p]]);
-								const auto bn = reinterpret_cast<const vec_t*>(&layer2[i].bias[reflection_neurons[p]]);
-								double resultn;
-								vec_store(reinterpret_cast<vec_t*>(&resultn), vec_add_16(vec_mul_16(*valn, *wn), *bn));
-								layer2[i].value[reflection_neurons[p]] = ReLU(resultn);
-							}
-						}
-					}
-				}
-			}
-		}
-
-		reflection_counter = 0;
-
-		for (int i = 0; i < L3; i++)
-		{
-			for (int j = 0; j < L2; j++)
-			{
-				for (int k = (FeatureTransformer + L1) * pc_ratio; k < (FeatureTransformer + L1 + L2) * pc_ratio; k++)
-				{
-					if (i != reflection_neurons[k] && j != reflection_neurons[k])
-					{
-						const auto val = reinterpret_cast<const vec_t*>(&layer2[j].value);
-						const auto w = reinterpret_cast<const vec_t*>(&layer3[i].weight[j]);
-						const auto b = reinterpret_cast<const vec_t*>(&layer3[i].bias[j]);
-						double result;
-						vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
-						layer3[i].value[j] = ReLU(result);
-
-						if (j + l2_rand_offset % 2 == 0)
-						{
-							const auto val1 = reinterpret_cast<const vec_t*>(&layer2[j - 1].value);
-							const auto w1 = reinterpret_cast<const vec_t*>(&layer3[reflection_neurons[k]].weight[j - 1]);
-							const auto b1 = reinterpret_cast<const vec_t*>(&layer3[reflection_neurons[k]].bias[j - 1]);
-							double result1;
-							vec_store(reinterpret_cast<vec_t*>(&result1), vec_add_16(vec_mul_16(*val1, *w1), *b1));
-							layer3[reflection_neurons[k]].value[j - 1] = ReLU(result1);
-
-							const auto val2 = reinterpret_cast<const vec_t*>(&layer2[j].value);
-							const auto w2 = reinterpret_cast<const vec_t*>(&layer3[reflection_neurons[k]].weight[j]);
-							const auto b2 = reinterpret_cast<const vec_t*>(&layer3[reflection_neurons[k]].bias[j]);
-							double result2;
-							vec_store(reinterpret_cast<vec_t*>(&result2), vec_add_16(vec_mul_16(*val2, *w2), *b2));
-							layer3[reflection_neurons[k]].value[j] = ReLU(result2);
-						}
-					}
-					else
-					{
-						for (int p = FeatureTransformer * pc_ratio; p < (FeatureTransformer + L1) * pc_ratio; p++)
-						{
-							const auto valp = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[p]].value);
-							const auto wp = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[k]].weight[reflection_neurons[p]]);
-							const auto bp = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[k]].bias[reflection_neurons[p]]);
-							double resultp;
-							vec_store(reinterpret_cast<vec_t*>(&resultp), vec_add_16(vec_mul_16(*valp, *wp), *bp));
-							layer1[reflection_neurons[k]].value[reflection_neurons[p]] = ReLU(resultp);
-
-							for (int n = (FeatureTransformer + L1 + L2) * pc_ratio; n < (FeatureTransformer + L1 + L2 + L3) * pc_ratio; n++)
-							{
-								const auto valn = reinterpret_cast<const vec_t*>(&layer1[reflection_neurons[p]].value);
-								const auto wn = reinterpret_cast<const vec_t*>(&layer3[i].weight[reflection_neurons[p]]);
-								const auto bn = reinterpret_cast<const vec_t*>(&layer3[i].bias[reflection_neurons[p]]);
-								double resultn;
-								vec_store(reinterpret_cast<vec_t*>(&resultn), vec_add_16(vec_mul_16(*valn, *wn), *bn));
-								layer3[i].value[reflection_neurons[p]] = ReLU(resultn);
-							}
-						}
-					}
-				}
-			}
-		}
-
-		reflection_counter = 0;
-
-		for (int i = 0; i < L4; i++)
-		{
-			for (int j = 0; j < L3; j++)
-			{
-				for (int k = (FeatureTransformer + L1 + L2) * pc_ratio; k < (FeatureTransformer + L1 + L2 + L3) * pc_ratio; k++)
-				{
-					if (i != reflection_neurons[k] && j != reflection_neurons[k])
-					{
-						const auto val = reinterpret_cast<const vec_t*>(&layer3[j].value);
-						const auto w = reinterpret_cast<const vec_t*>(&layer4[i].weight[j]);
-						const auto b = reinterpret_cast<const vec_t*>(&layer4[i].bias[j]);
-						double result;
-						vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
-						layer4[i].value[j] = Sigmoid(result);
-					}
-					else
-					{
-						for (int p = (FeatureTransformer + L1) * pc_ratio; p < (FeatureTransformer + L1 + L2) * pc_ratio; p++)
-						{
-							const auto valp = reinterpret_cast<const vec_t*>(&layer3[reflection_neurons[p]].value);
-							const auto wp = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[k]].weight[reflection_neurons[p]]);
-							const auto bp = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[k]].bias[reflection_neurons[p]]);
-							double resultp;
-							vec_store(reinterpret_cast<vec_t*>(&resultp), vec_add_16(vec_mul_16(*valp, *wp), *bp));
-							layer2[reflection_neurons[k]].value[reflection_neurons[p]] = ReLU(resultp);
-
-							for (int n = (FeatureTransformer + L1 + L2 + L3) * pc_ratio; n < (FeatureTransformer + L1 + L2 + L3 + L4) * pc_ratio; n++)
-							{
-								const auto valn = reinterpret_cast<const vec_t*>(&layer2[reflection_neurons[p]].value);
-								const auto wn = reinterpret_cast<const vec_t*>(&layer4[i].weight[reflection_neurons[p]]);
-								const auto bn = reinterpret_cast<const vec_t*>(&layer4[i].bias[reflection_neurons[p]]);
-								double resultn;
-								vec_store(reinterpret_cast<vec_t*>(&resultn), vec_add_16(vec_mul_16(*valn, *wn), *bn));
-								layer4[i].value[reflection_neurons[p]] = Sigmoid(resultn);
-							}
-						}
-					}
-				}
-			}
-		}
-
-		reflection_counter = 0;
-
 	}
 
 	void backward(const int& score)
 	{
-		for (int i = 0; i < L4; i++)
+		for (int i = 0; i < layer_structure.size(); i++)
 		{
-			for (int j = 0; j < L3; j++)
+			for (int j = layer_structure[i]; j < layer_structure[(((i + 1) == layer_structure.size()) ? (layer_structure.size() - 1) : (i + 1))]; j++)
 			{
-				const auto val = reinterpret_cast<const vec_t*>(&layer3[j].value);
-				const auto w = reinterpret_cast<const vec_t*>(&layer4[i].weight[j]);
-				const auto b = reinterpret_cast<const vec_t*>(&layer4[i].bias[j]);
-				double result;
-				vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
-				delta4[i] += -(score - result) * result * (1.0 - result);
-			}
-		}
+				for (int k = ((i == 0) ? 0 : layer_structure[i - 1]); k < layer_structure[i]; k++)
+				{
+					for (int l = ((i == 0) ? 0 : layer_structure[i - 1] * pc_ratio); l < layer_structure[i] * pc_ratio; l++)
+					{
+						if (j != reflection_neurons[l] && k != reflection_neurons[l])
+						{
+							const auto val = reinterpret_cast<const vec_t*>(&layer[k].value);
+							const auto w = reinterpret_cast<const vec_t*>(&layer[j].weight[k]);
+							const auto b = reinterpret_cast<const vec_t*>(&layer[j].bias[k]);
+							double result;
+							vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
+							delta[j] += -(score - result) * result * (1.0 - result);
 
-		for (int i = 0; i < L3; i++)
-		{
-			for (int j = 0; j < L2; j++)
-			{
-				const auto val = reinterpret_cast<const vec_t*>(&layer2[j].value);
-				const auto w = reinterpret_cast<const vec_t*>(&layer3[i].weight[j]);
-				const auto b = reinterpret_cast<const vec_t*>(&layer3[i].bias[j]);
-				double result;
-				vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
-				delta3[i] += -(score - result) * result * (1.0 - result);
-			}
-		}
+							const auto vald = reinterpret_cast<const vec_t*>(&layer[k].value);
+							const auto deltad = reinterpret_cast<const vec_t*>(&delta[j]);
+							const auto LR = reinterpret_cast<const vec_t*>(&lr);
+							double weightd;
+							double biasd;
+							vec_store(reinterpret_cast<vec_t*>(&weightd), vec_mul_16(*LR, vec_mul_16(*deltad, *vald)));
+							vec_store(reinterpret_cast<vec_t*>(&biasd), vec_mul_16(*LR, *deltad));
+							layer[j].weight[k] -= weightd;
+							layer[j].bias[k] -= biasd;
 
-		for (int i = 0; i < L2; i++)
-		{
-			for (int j = 0; j < L1; j++)
-			{
-				const auto val = reinterpret_cast<const vec_t*>(&layer1[j].value);
-				const auto w = reinterpret_cast<const vec_t*>(&layer2[i].weight[j]);
-				const auto b = reinterpret_cast<const vec_t*>(&layer2[i].bias[j]);
-				double result;
-				vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
-				delta2[i] += -(score - result) * result * (1.0 - result);
-			}
-		}
+							if (k + rand_offset % 2 == 0)
+							{
+								const auto val1 = reinterpret_cast<const vec_t*>(&layer[(((k - 1) < 0) ? 0 : (k - 1))].value);
+								const auto w1 = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[l]].weight[(((k - 1) < 0) ? 0 : (k - 1))]);
+								const auto b1 = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[l]].bias[(((k - 1) < 0) ? 0 : (k - 1))]);
+								double result1;
+								vec_store(reinterpret_cast<vec_t*>(&result1), vec_add_16(vec_mul_16(*val1, *w1), *b1));
+								delta[reflection_neurons[l]] += -(score - result) * result * (1.0 - result);
 
-		for (int i = 0; i < L1; i++)
-		{
-			for (int j = 0; j < FeatureTransformer; j++)
-			{
-				const auto val = reinterpret_cast<const vec_t*>(&feature[j].value);
-				const auto w = reinterpret_cast<const vec_t*>(&layer1[i].weight[j]);
-				const auto b = reinterpret_cast<const vec_t*>(&layer1[i].bias[j]);
-				double result;
-				vec_store(reinterpret_cast<vec_t*>(&result), vec_add_16(vec_mul_16(*val, *w), *b));
-				delta1[i] += -(score - result) * result * (1.0 - result);
-			}
-		}
+								const auto vald1 = reinterpret_cast<const vec_t*>(&layer[k].value);
+								const auto deltad1 = reinterpret_cast<const vec_t*>(&delta[j]);
+								const auto LR1 = reinterpret_cast<const vec_t*>(&lr);
+								double weightd1;
+								double biasd1;
+								vec_store(reinterpret_cast<vec_t*>(&weightd1), vec_mul_16(*LR1, vec_mul_16(*deltad1, *vald)));
+								vec_store(reinterpret_cast<vec_t*>(&biasd1), vec_mul_16(*LR1, *deltad1));
+								layer[j].weight[k] -= weightd1;
+								layer[j].bias[k] -= biasd1;
 
-		for (int i = 0; i < L4; i++)
-		{
-			for (int j = 0; j < L3; j++)
-			{
-				const auto val = reinterpret_cast<const vec_t*>(&layer3[j].value);
-				const auto delta = reinterpret_cast<const vec_t*>(&delta4[i]);
-				const auto LR = reinterpret_cast<const vec_t*>(&lr);
-				double fweight;
-				double fbias;
-				vec_store(reinterpret_cast<vec_t*>(&fweight), vec_mul_16(*LR, vec_mul_16(*delta, *val)));
-				vec_store(reinterpret_cast<vec_t*>(&fbias), vec_mul_16(*LR, *delta));
-				layer4[i].weight[j] -= fweight;
-				layer4[i].bias[j] -= fbias;
-			}
-		}
+								const auto val2 = reinterpret_cast<const vec_t*>(&layer[j].value);
+								const auto w2 = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[l]].weight[j]);
+								const auto b2 = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[l]].bias[j]);
+								double result2;
+								vec_store(reinterpret_cast<vec_t*>(&result2), vec_add_16(vec_mul_16(*val2, *w2), *b2));
+								delta[reflection_neurons[l]] += -(score - result) * result * (1.0 - result);
 
-		for (int i = 0; i < L3; i++)
-		{
-			for (int j = 0; j < L2; j++)
-			{
-				const auto val = reinterpret_cast<const vec_t*>(&layer2[j].value);
-				const auto delta = reinterpret_cast<const vec_t*>(&delta3[i]);
-				const auto LR = reinterpret_cast<const vec_t*>(&lr);
-				double fweight;
-				double fbias;
-				vec_store(reinterpret_cast<vec_t*>(&fweight), vec_mul_16(*LR, vec_mul_16(*delta, *val)));
-				vec_store(reinterpret_cast<vec_t*>(&fbias), vec_mul_16(*LR, *delta));
-				layer3[i].weight[j] -= fweight;
-				layer3[i].bias[j] -= fbias;
-			}
-		}
+								const auto vald2 = reinterpret_cast<const vec_t*>(&layer[k].value);
+								const auto deltad2 = reinterpret_cast<const vec_t*>(&delta[j]);
+								const auto LR2 = reinterpret_cast<const vec_t*>(&lr);
+								double weightd2;
+								double biasd2;
+								vec_store(reinterpret_cast<vec_t*>(&weightd2), vec_mul_16(*LR2, vec_mul_16(*deltad2, *vald)));
+								vec_store(reinterpret_cast<vec_t*>(&biasd2), vec_mul_16(*LR2, *deltad2));
+								layer[j].weight[k] -= weightd2;
+								layer[j].bias[k] -= biasd2;
+							}
+						}
+						else
+						{
+							for (int p = ((i == 1) ? 0 : layer_structure[i - 2] * pc_ratio); p < layer_structure[i - 1] * pc_ratio; p++)
+							{
+								const auto valp = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[p]].value);
+								const auto wp = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[l]].weight[reflection_neurons[p]]);
+								const auto bp = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[l]].bias[reflection_neurons[p]]);
+								double resultp;
+								vec_store(reinterpret_cast<vec_t*>(&resultp), vec_add_16(vec_mul_16(*valp, *wp), *bp));
+								delta[reflection_neurons[l]] += -(score - resultp) * resultp * (1.0 - resultp);
 
-		for (int i = 0; i < L2; i++)
-		{
-			for (int j = 0; j < L1; j++)
-			{
-				const auto val = reinterpret_cast<const vec_t*>(&layer1[j].value);
-				const auto delta = reinterpret_cast<const vec_t*>(&delta2[i]);
-				const auto LR = reinterpret_cast<const vec_t*>(&lr);
-				double fweight;
-				double fbias;
-				vec_store(reinterpret_cast<vec_t*>(&fweight), vec_mul_16(*LR, vec_mul_16(*delta, *val)));
-				vec_store(reinterpret_cast<vec_t*>(&fbias), vec_mul_16(*LR, *delta));
-				layer2[i].weight[j] -= fweight;
-				layer2[i].bias[j] -= fbias;
-			}
-		}
+								const auto valpd = reinterpret_cast<const vec_t*>(&layer[k].value);
+								const auto deltapd = reinterpret_cast<const vec_t*>(&delta[j]);
+								const auto LRp = reinterpret_cast<const vec_t*>(&lr);
+								double weightpd;
+								double biaspd;
+								vec_store(reinterpret_cast<vec_t*>(&weightpd), vec_mul_16(*LRp, vec_mul_16(*deltapd, *valpd)));
+								vec_store(reinterpret_cast<vec_t*>(&biaspd), vec_mul_16(*LRp, *deltapd));
+								layer[j].weight[k] -= weightpd;
+								layer[j].bias[k] -= biaspd;
 
-		for (int i = 0; i < L1; i++)
-		{
-			for (int j = 0; j < FeatureTransformer; j++)
-			{
-				const auto val = reinterpret_cast<const vec_t*>(&feature[j].value);
-				const auto delta = reinterpret_cast<const vec_t*>(&delta1[i]);
-				const auto LR = reinterpret_cast<const vec_t*>(&lr);
-				double fweight;
-				double fbias;
-				vec_store(reinterpret_cast<vec_t*>(&fweight), vec_mul_16(*LR, vec_mul_16(*delta, *val)));
-				vec_store(reinterpret_cast<vec_t*>(&fbias), vec_mul_16(*LR, *delta));
-				layer1[i].weight[j] -= fweight;
-				layer1[i].bias[j] -= fbias;
+								for (int n = layer_structure[i] * pc_ratio; n < layer_structure[i + 1] * pc_ratio; n++)
+								{
+									const auto valn = reinterpret_cast<const vec_t*>(&layer[reflection_neurons[p]].value);
+									const auto wn = reinterpret_cast<const vec_t*>(&layer[k].weight[reflection_neurons[p]]);
+									const auto bn = reinterpret_cast<const vec_t*>(&layer[k].bias[reflection_neurons[p]]);
+									double resultn;
+									vec_store(reinterpret_cast<vec_t*>(&resultn), vec_add_16(vec_mul_16(*valn, *wn), *bn));
+									delta[reflection_neurons[l]] += -(score - resultn) * resultn * (1.0 - resultn);
+
+									const auto valnd = reinterpret_cast<const vec_t*>(&layer[k].value);
+									const auto deltand = reinterpret_cast<const vec_t*>(&delta[j]);
+									const auto LRn = reinterpret_cast<const vec_t*>(&lr);
+									double weightnd;
+									double biasnd;
+									vec_store(reinterpret_cast<vec_t*>(&weightnd), vec_mul_16(*LRn, vec_mul_16(*deltand, *valnd)));
+									vec_store(reinterpret_cast<vec_t*>(&biasnd), vec_mul_16(*LRn, *deltand));
+									layer[j].weight[k] -= weightnd;
+									layer[j].bias[k] -= biasnd;
+								}
+							}
+						}
+					}
+				}
 			}
 		}
 	}
 
 	double Loss(const double& score)
 	{
-		for (int i = 0; i < L4; i++)
+		for (int i = layer_structure[layer_structure.size() - 1]; i < layer_structure[layer_structure.size()]; i++)
 		{
-			loss += (layer4[i].value[0] - score) * (layer4[i].value[0] - score) / 2;
+			loss += (layer[i].value[0] - score) * (layer[i].value[0] - score) / 2;
 		}
 
 		return loss;
@@ -578,49 +318,26 @@ namespace PCRNN
 	{
 		std::ofstream nnfile(filepath.c_str());
 
-		nnfile << FeatureTransformer << " " << L1 << " " << L2 << " " << L3 << " " << L4 << std::endl;
-
-		for (int i = 0; i < FeatureTransformer; i++)
+		for (int i = 0; i < layer_structure.size(); i++)
 		{
-			nnfile << feature[i].weight[0] << " " << feature[i].bias[0] << std::endl;
+			nnfile << layer_structure[i] << " ";
 		}
 
-		for (int i = 0; i < L1; i++)
-		{
-			for (int j = 0; j < FeatureTransformer; j++)
-			{
-				nnfile << layer1[i].weight[j] << " " << layer1[i].bias[j] << std::endl;
-			}
-		}
+		nnfile << std::endl;
 
-		for (int i = 0; i < L2; i++)
+		for (int i = 0; i < layer_structure.size(); i++)
 		{
-			for (int j = 0; j < L1; j++)
+			for (int j = layer_structure[i]; j < layer_structure[(((i + 1) == layer_structure.size()) ? (layer_structure.size() - 1) : (i + 1))]; j++)
 			{
-				nnfile << layer2[i].weight[j] << " " << layer2[i].bias[j] << std::endl;
-			}
-		}
-
-		for (int i = 0; i < L3; i++)
-		{
-			for (int j = 0; j < L2; j++)
-			{
-				nnfile << layer3[i].weight[j] << " " << layer3[i].bias[j] << std::endl;
-			}
-		}
-
-		for (int i = 0; i < L4; i++)
-		{
-			for (int j = 0; j < L3; j++)
-			{
-				nnfile << layer4[i].weight[j] << " " << layer4[i].bias[j] << std::endl;
+				for (int k = ((i == 0) ? 0 : layer_structure[i - 1]); k < layer_structure[i]; k++)
+				{
+					nnfile << layer[j].weight[k] << " " << layer[j].bias[k] << std::endl;
+				}
 			}
 		}
 
 		nnfile << "pcr" << " " << pc_ratio << std::endl;
-		nnfile << "fro" << " " << f_rand_offset << std::endl;
-		nnfile << "l1ro" << " " << l1_rand_offset << std::endl;
-		nnfile << "l2ro" << " " << l2_rand_offset << std::endl;
+		nnfile << "ro" << " " << rand_offset << std::endl;
 
 		nnfile.close();
 	}
@@ -663,47 +380,29 @@ namespace PCRNN
 
 	void tune_reflection()
 	{
-		f_rand_offset = re_disf(gen);
-		l1_rand_offset = re_dis1(gen);
-		l2_rand_offset = re_dis2(gen);
-
-		for (int i = 0; i < FeatureTransformer * pc_ratio; i++)
+		for (int i = 0; i < layer_structure.size(); i++)
 		{
-			reflection_neurons[i] = re_disf(gen);
-			
-			if (reflection_neurons[i] != i)
+			for (int j = layer_structure[i]; j < layer_structure[(((i + 1) == layer_structure.size()) ? (layer_structure.size() - 1) : (i + 1))] * pc_ratio; j++)
 			{
-				std::swap(feature[re_disf(gen)], feature[reflection_neurons[i]]);
-			}
-		}
+				for (int k = ((i == 0) ? 0 : layer_structure[i - 1]); k < layer_structure[i] * pc_ratio; k++)
+				{
+					std::uniform_int_distribution<> re_dis1(0, layer_structure[(((i + 1) == layer_structure.size()) ? (layer_structure.size() - 1) : (i + 1))] - 1);
+					std::uniform_int_distribution<> re_dis2(0, layer_structure[i] - 1);
 
-		for (int i = 0; i < L1 * pc_ratio; i++)
-		{
-			reflection_neurons[i] = re_dis1(gen);
+					reflection_neurons[j] = re_dis1(gen);
 
-			if (reflection_neurons[i] != i)
-			{
-				std::swap(layer1[re_dis1(gen)], layer1[reflection_neurons[i]]);
-			}
-		}
+					if (reflection_neurons[j] != j)
+					{
+						std::swap(layer[re_dis1(gen)], layer[reflection_neurons[j]]);
+					}
 
-		for (int i = 0; i < L2 * pc_ratio; i++)
-		{
-			reflection_neurons[i] = re_dis2(gen);
+					reflection_neurons[k] = re_dis2(gen);
 
-			if (reflection_neurons[i] != i)
-			{
-				std::swap(layer2[re_dis2(gen)], layer2[reflection_neurons[i]]);
-			}
-		}
-
-		for (int i = 0; i < L3 * pc_ratio; i++)
-		{
-			reflection_neurons[i] = re_dis3(gen);
-
-			if (reflection_neurons[i] != i)
-			{
-				std::swap(layer3[re_dis3(gen)], layer3[reflection_neurons[i]]);
+					if (reflection_neurons[k] != k)
+					{
+						std::swap(layer[re_dis2(gen)], layer[reflection_neurons[k]]);
+					}
+				}
 			}
 		}
 	}
